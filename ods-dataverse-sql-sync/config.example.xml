@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- ODS Dataverse to SQL Sync - configuration.
+     Copy this file to config.xml next to Sync-DataverseToSql.ps1 and fill it in.
+     KEEP config.xml PRIVATE - it holds a client secret and a SQL password.
+
+     Dataverse
+       OrgUrl        your environment URL, e.g. https://yourorg.crm.dynamics.com
+       TenantId      Microsoft Entra tenant id (Directory ID)
+       ClientId      the app registration's Application (client) ID
+       ClientSecret  a client secret on that app registration. Leave it empty
+                     (or set it to INTERACTIVE) to sign in as yourself with the
+                     Az.Accounts module instead.
+       The app registration must be an Application User on the environment
+       with a security role that can read the tables you sync.
+
+     Sql
+       Server / Database   the SQL Server or Azure SQL database to write to
+       Username / Password a SQL login that can CREATE TABLE / ALTER TABLE /
+                           CREATE VIEW in that database. Leave Username empty
+                           to use Windows (integrated) authentication.
+       TablePrefix         optional prefix for every replica table name
+                           (e.g. crm_ gives crm_account, crm_contact, ...)
+
+     Paths
+       Relative paths resolve against the folder the process starts in. For a
+       scheduled task, set "Start in" to this folder or use full paths.
+
+     Tables
+       List tables explicitly (<Table><LogicalName>), discover them by prefix
+       (<Prefixes>), or set SyncAllTables to true. ExcludeTables removes names
+       from whatever the other options found. Names are Dataverse LOGICAL names
+       (singular: account, not accounts). An explicit <Table> may also set
+       <SqlTableName> and <PrimaryKey> when they differ from the defaults
+       (<logicalname> and <logicalname>id).
+
+       Three special names are also accepted as explicit tables:
+         GlobalChoices          every option-set label (global + per table)
+         ods_metadata           table display names from Dataverse metadata
+         ods_metadata_columns   column display names from Dataverse metadata
+
+     Questions? support@orgdatasolutions.com -->
+<Config>
+  <Dataverse>
+    <OrgUrl>https://yourorg.crm.dynamics.com</OrgUrl>
+    <TenantId>00000000-0000-0000-0000-000000000000</TenantId>
+    <ClientId>00000000-0000-0000-0000-000000000000</ClientId>
+    <ClientSecret>paste-your-client-secret-here</ClientSecret>
+  </Dataverse>
+  <Sql>
+    <Server>your-sql-server</Server>
+    <Database>YourDatabase</Database>
+    <Username>sync_user</Username>
+    <Password>paste-password-here</Password>
+    <TablePrefix />
+  </Sql>
+  <Paths>
+    <StatePath>logs\sync_state.json</StatePath>
+    <LogPath>logs\sync_log.txt</LogPath>
+  </Paths>
+  <Performance>
+    <BatchSize>5000</BatchSize>
+    <PageSize>5000</PageSize>
+    <MaxParallel>5</MaxParallel>
+  </Performance>
+  <Tables>
+    <SyncAllTables>false</SyncAllTables>
+
+    <!-- Discover every table whose logical name starts with one of these.
+         Replace with your own publisher prefix(es). -->
+    <Prefixes>
+      <Prefix>new_</Prefix>
+    </Prefixes>
+
+    <!-- Skip tables the prefix match would otherwise include
+         (very large logs, staging tables, ...). -->
+    <ExcludeTables>
+      <Table>new_integrationlog</Table>
+    </ExcludeTables>
+
+    <!-- Standard tables to sync. -->
+    <Table>
+      <LogicalName>account</LogicalName>
+    </Table>
+    <Table>
+      <LogicalName>contact</LogicalName>
+    </Table>
+    <Table>
+      <LogicalName>GlobalChoices</LogicalName>
+    </Table>
+  </Tables>
+</Config>

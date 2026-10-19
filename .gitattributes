@@ -1,0 +1,3 @@
+# Store every file byte-for-byte: no line-ending conversion on checkout.
+# SHA256SUMS.txt and the Authenticode signatures depend on exact bytes.
+* -text

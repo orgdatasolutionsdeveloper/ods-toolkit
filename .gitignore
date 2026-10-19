@@ -1,0 +1,17 @@
+# Real configs carry passwords and client secrets. Only the examples ship.
+config.xml
+backup-config.psd1
+*.env
+.env
+appsettings*.json
+
+# Python
+__pycache__/
+*.pyc
+
+# Tool output (contains your data)
+audit-export/
+governance_report.html
+governance_*.csv
+logs/
+*.bak
