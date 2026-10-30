@@ -1,94 +1,93 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-=============================================================================
- ODS Data Governance Scan - a free tool from Org Data Solutions
-=============================================================================
+SQL Server Sensitive Data Scanner
+Version 0.4.0 (beta)
+By John Stover, Org Data Solutions
 
- What it does
- ------------
- Answers the question every association, AMC and nonprofit is being asked by
- its board right now: "before we point AI at our data, do we even know what
- sensitive information is in there, and who can read it?"
+Point this at a SQL Server or Azure SQL database you own and get a report of
+what sensitive data is in it, who can read it, and what to fix first.
 
- Point it at a SQL Server / Azure SQL database you own (a read-only login is
- enough) and it produces a governance-readiness report:
+What it does
+  1. Lists every table and column, with row counts.
+  2. Flags columns that look like personal, credential, payment, financial
+     or health data. By column name always; with --sample also by the values
+     the column holds, which is how it finds the "notes" column that is full
+     of email addresses.
+  3. Lists the logins and roles that can read the tables holding that data.
+  4. Ranks the findings by severity and scores the database 0 to 100.
 
-   1. WHAT'S IN THERE   - every table and column, with row counts.
-   2. WHAT'S SENSITIVE  - columns that look like PII, credentials, payment or
-                          financial data, by NAME and (with --sample) by the
-                          VALUES they actually hold. The second pass is the
-                          one that finds the "notes" column full of email
-                          addresses.
-   3. WHO CAN READ IT   - the logins and roles that can SELECT from the
-                          tables holding that sensitive data.
-   4. WHAT TO FIX FIRST - findings ranked by severity, plus a 0-100
-                          governance-readiness score across four axes.
+Everything is read-only. The script runs SELECTs against the system catalog
+views and, with --sample, TOP-N reads of the columns it inspects. It never
+writes to the database and never sends your data anywhere. The report is
+written to a folder on your computer.
 
- Everything is READ-ONLY. The script issues SELECTs against system catalog
- views (and, with --sample, TOP-N reads of the columns it is inspecting). It
- never writes, never alters, and never sends your data anywhere - the report
- is written to disk next to the script.
+Usage
+  python sql_server_sensitive_data_scanner.py                names only, fastest
+  python sql_server_sensitive_data_scanner.py --sample       also inspect values (recommended)
+  python sql_server_sensitive_data_scanner.py --sample --rows=200
+  python sql_server_sensitive_data_scanner.py --schemas=dbo,ops
+  python sql_server_sensitive_data_scanner.py --out=C:\\reports\\finance
 
- Usage
- -----
-   python ods_governance_scan.py                     # scan using config.xml
-   python ods_governance_scan.py --sample            # also inspect values (recommended)
-   python ods_governance_scan.py --sample --rows=200 # deeper value sampling
-   python ods_governance_scan.py --schemas=dbo,ops   # limit to some schemas
-   python ods_governance_scan.py --out=./report      # choose an output folder
+  On Windows, run.cmd in this folder does the same and first installs
+  Python, pyodbc and the ODBC driver when they are missing.
 
- Outputs (in --out, default: the current folder)
-   governance_report.html      branded one-page summary - start here
-   governance_findings.csv     one row per sensitive/at-risk column
-   governance_tables.csv       table inventory with row counts + PII counts
-   governance_access.csv       principals that can read sensitive tables
+Outputs (in --out; default: the sensitive-data-report folder next to this script)
+  sensitive_data_report.html     one-page summary, start here
+  sensitive_data_findings.csv    one row per flagged column
+  sensitive_data_tables.csv      table inventory with row counts and flagged counts
+  sensitive_data_access.csv      principals that can read the data
 
- Setup (one-time, ~2 minutes)
- ----------------------------
- 1. pip install pyodbc            (plus a SQL Server ODBC driver - "ODBC
-                                   Driver 18 for SQL Server" ships with SSMS
-                                   and most Windows SQL installs)
- 2. Copy config.sample.xml to config.xml next to this script and fill in your
-    server, database and credentials. A read-only login (db_datareader) is
-    enough, and is what we recommend. Keep config.xml out of source control.
+Setup
+  Needs Python 3.9 or later, the pyodbc package and a SQL Server ODBC driver.
+  The script installs pyodbc itself when it is missing, and on Windows
+  installs the Microsoft ODBC Driver 18 for SQL Server when no driver is
+  found. On the first run with no config.xml it asks for the server, database
+  and login on the console and writes config.xml next to this script. A
+  read-only login (db_datareader) is enough. Keep config.xml private: it
+  holds a password.
 
- Questions, or want this running continuously instead of once?
- support@orgdatasolutions.com - the hosted ODS Data Management Platform does
- this every day, enforces the classifications it finds (masking sensitive
- columns for the right roles everywhere, including in AI answers), and emails
- you a weekly governance digest.
-
- Load these results into your free workspace (free for nonprofits and .org
- organizations): https://data.orgdatasolutions.com/signup?src=toolkit-governance-scan
-
- -----------------------------------------------------------------------------
- Copyright (c) 2026 Org Data Solutions. MIT License (see LICENSE): free to
- use, change and share, as-is, no warranty.
-=============================================================================
+Copyright (c) 2026 John Stover, Org Data Solutions. MIT License (see LICENSE).
+Provided as-is, without warranty. Questions: support@orgdatasolutions.com
 """
 
 import argparse
 import csv
+import getpass
 import html
 import os
 import re
+import subprocess
 import sys
 import xml.etree.ElementTree as ET
 from collections import defaultdict
 from datetime import datetime, timezone
+from xml.sax.saxutils import escape as xml_escape
 
-TOOL_NAME = "ODS Data Governance Scan"
+TOOL_NAME = "SQL Server Sensitive Data Scanner"
+VERSION = "0.4.0"
+AUTHOR = "John Stover, Org Data Solutions"
 SUPPORT_EMAIL = "support@orgdatasolutions.com"
 PLATFORM_URL = "https://data.orgdatasolutions.com"
 # A plain link: it carries only the tool name, never any scan results.
 SIGNUP_URL = PLATFORM_URL + "/signup?src=toolkit-governance-scan"
 
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+DEFAULT_CONFIG = os.path.join(SCRIPT_DIR, "config.xml")
+DEFAULT_OUT = os.path.join(SCRIPT_DIR, "sensitive-data-report")
+
+# Drivers in order of preference when the one named in config.xml is absent.
+KNOWN_DRIVERS = [
+    "ODBC Driver 18 for SQL Server",
+    "ODBC Driver 17 for SQL Server",
+    "SQL Server Native Client 11.0",
+    "SQL Server",
+]
+
 # --------------------------------------------------------------------------
 # Detection rules
 # --------------------------------------------------------------------------
-# Name heuristics. Deliberately the same vocabulary the ODS platform uses, so
-# a finding here maps 1:1 onto a sensitivity flag there.
+# Name rules: a column whose name matches is flagged with that classification.
 NAME_RULES = [
     ("Email",              r"e[-_]?mail"),
     ("Phone",              r"phone|mobile|cell(?!ar)|fax"),
@@ -164,14 +163,151 @@ def luhn_ok(digits: str) -> bool:
 
 
 # --------------------------------------------------------------------------
+# Requirements: pyodbc and an ODBC driver, installed on demand
+# --------------------------------------------------------------------------
+def ensure_pyodbc():
+    """Return the pyodbc module, installing it with pip first if needed."""
+    try:
+        import pyodbc
+        return pyodbc
+    except ImportError:
+        pass
+    print("  The pyodbc package is not installed. Installing it with pip ...")
+    cmd = [sys.executable, "-m", "pip", "install", "--quiet", "pyodbc"]
+    try:
+        subprocess.check_call(cmd)
+    except Exception:
+        try:
+            subprocess.check_call(cmd + ["--user"])
+        except Exception as ex:
+            sys.exit(
+                f"\n  Could not install pyodbc ({ex}).\n"
+                f"  Install it by hand, then run the scanner again:\n"
+                f"      {sys.executable} -m pip install pyodbc\n"
+            )
+    import importlib
+    importlib.invalidate_caches()
+    try:
+        import pyodbc
+        return pyodbc
+    except ImportError:
+        sys.exit("\n  pyodbc was installed but cannot be loaded yet. Open a new command prompt and run the scanner again.\n")
+
+
+def installed_sql_drivers(pyodbc):
+    return [d for d in pyodbc.drivers() if "SQL Server" in d]
+
+
+def install_odbc_driver():
+    """Windows only: install Microsoft ODBC Driver 18 for SQL Server with winget."""
+    if sys.platform != "win32":
+        print("  No SQL Server ODBC driver is installed. Install Microsoft's ODBC Driver 18 for SQL Server")
+        print("  for your operating system (search for 'ODBC Driver 18 for SQL Server'), then run again.")
+        return False
+    import shutil
+    if not shutil.which("winget"):
+        print("  No SQL Server ODBC driver is installed and winget is not available.")
+        print("  Download 'Microsoft ODBC Driver 18 for SQL Server' from microsoft.com, install it, and run again.")
+        return False
+    print("  No SQL Server ODBC driver is installed. Installing Microsoft ODBC Driver 18 for SQL Server ...")
+    print("  (winget may show an administrator prompt)")
+    rc = subprocess.call([
+        "winget", "install", "-e", "--id", "Microsoft.msodbcsql.18",
+        "--accept-source-agreements", "--accept-package-agreements",
+    ])
+    if rc != 0:
+        print("  The driver install did not finish. Install 'Microsoft ODBC Driver 18 for SQL Server' by hand and run again.")
+        return False
+    return True
+
+
+def pick_driver(pyodbc, wanted):
+    """The configured driver if installed, else the best installed one, else None."""
+    installed = installed_sql_drivers(pyodbc)
+    if wanted and wanted in installed:
+        return wanted
+    for name in KNOWN_DRIVERS:
+        if name in installed:
+            if wanted:
+                print(f"  Driver '{wanted}' is not installed; using '{name}' instead.")
+            return name
+    return installed[0] if installed else None
+
+
+# --------------------------------------------------------------------------
 # Config + connection
 # --------------------------------------------------------------------------
+NO_CONSOLE_MESSAGE = (
+    "\n  No config.xml found and no console to ask on.\n"
+    "  Copy config.sample.xml to config.xml next to this script and fill it in,\n"
+    "  or run the scanner from a command prompt and it will ask for the settings.\n"
+)
+
+
+def ask(prompt, default=""):
+    shown = f"  {prompt}" + (f" [{default}]" if default else "") + ": "
+    try:
+        answer = input(shown).strip()
+    except EOFError:
+        sys.exit(NO_CONSOLE_MESSAGE)
+    return answer or default
+
+
+def ask_yes_no(prompt, default_no=True):
+    answer = ask(f"{prompt} [{'y/N' if default_no else 'Y/n'}]").lower()
+    if not answer:
+        return not default_no
+    return answer in ("y", "yes")
+
+
+def ask_secret(prompt):
+    try:
+        return getpass.getpass(f"  {prompt}: ")
+    except EOFError:
+        sys.exit(NO_CONSOLE_MESSAGE)
+
+
+def create_config_interactively(path):
+    """Ask for the connection settings on the console and write config.xml."""
+    if not sys.stdin or not sys.stdin.isatty():
+        sys.exit(NO_CONSOLE_MESSAGE)
+    print("\n  No config.xml found. Answer these questions and the file will be written to:")
+    print(f"  {path}\n")
+    server = ask("SQL Server name (for example sqlprod, sql\\INSTANCE or yourserver.database.windows.net)")
+    database = ask("Database to scan")
+    if not server or not database:
+        sys.exit("  A server name and a database name are both required.")
+    trusted = ask_yes_no("Sign in with your Windows account instead of a SQL login?")
+    username = password = ""
+    if not trusted:
+        username = ask("SQL login name (a read-only login is enough)")
+        password = ask_secret("Password (not shown while typing)")
+    pyodbc = ensure_pyodbc()
+    driver = pick_driver(pyodbc, "") or "ODBC Driver 18 for SQL Server"
+    xml = (
+        '<?xml version="1.0" encoding="utf-8"?>\n'
+        "<!-- SQL Server Sensitive Data Scanner connection settings.\n"
+        "     Written by the scanner on first run. Edit with any text editor.\n"
+        "     KEEP THIS FILE PRIVATE: it may contain a password. -->\n"
+        "<config>\n"
+        f"  <Server>{xml_escape(server)}</Server>\n"
+        f"  <Database>{xml_escape(database)}</Database>\n"
+        f"  <Username>{xml_escape(username)}</Username>\n"
+        f"  <Password>{xml_escape(password)}</Password>\n"
+        f"  <TrustedConnection>{'yes' if trusted else 'no'}</TrustedConnection>\n"
+        f"  <Driver>{xml_escape(driver)}</Driver>\n"
+        "  <Encrypt>yes</Encrypt>\n"
+        "  <TrustServerCertificate>yes</TrustServerCertificate>\n"
+        "</config>\n"
+    )
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(xml)
+    print(f"\n  Written: {path}\n")
+
+
 def load_config(path):
     if not os.path.exists(path):
-        sys.exit(
-            f"\n  Missing {os.path.basename(path)}.\n"
-            f"  Copy config.sample.xml to config.xml next to this script and fill it in.\n"
-        )
+        create_config_interactively(path)
     root = ET.parse(path).getroot()
 
     def val(tag, default=""):
@@ -194,24 +330,23 @@ def load_config(path):
 
 
 def connect(cfg):
-    try:
-        import pyodbc  # noqa: F401
-    except ImportError:
-        sys.exit(
-            "\n  This tool needs the pyodbc package:\n"
-            "      pip install pyodbc\n"
-            "  plus a SQL Server ODBC driver (e.g. 'ODBC Driver 18 for SQL Server').\n"
-        )
-    import pyodbc
+    pyodbc = ensure_pyodbc()
+    driver = pick_driver(pyodbc, cfg["driver"])
+    if driver is None:
+        if install_odbc_driver():
+            driver = pick_driver(pyodbc, cfg["driver"])
+        if driver is None:
+            sys.exit("\n  No SQL Server ODBC driver found. Install one and run the scanner again.\n")
 
     parts = [
-        f"DRIVER={{{cfg['driver']}}}",
+        f"DRIVER={{{driver}}}",
         f"SERVER={cfg['server']}",
         f"DATABASE={cfg['database']}",
-        f"Encrypt={cfg['encrypt']}",
-        f"TrustServerCertificate={cfg['trust_cert']}",
         "Connection Timeout=30",
     ]
+    if driver.startswith("ODBC Driver"):
+        parts.append(f"Encrypt={cfg['encrypt']}")
+        parts.append(f"TrustServerCertificate={cfg['trust_cert']}")
     if cfg["trusted"]:
         parts.append("Trusted_Connection=yes")
     else:
@@ -548,7 +683,7 @@ def write_report(path, cfg, tables, findings, readers, overall, axes, stats, did
     )
 
     doc = f"""<!doctype html><html><head><meta charset="utf-8">
-<title>Data Governance Scan &mdash; {e(cfg['database'])}</title>
+<title>{TOOL_NAME} &mdash; {e(cfg['database'])}</title>
 <style>
  body{{font-family:Segoe UI,Arial,sans-serif;color:#1e293b;margin:0;background:#f8fafc}}
  .wrap{{max-width:60rem;margin:0 auto;padding:2rem}}
@@ -574,8 +709,8 @@ def write_report(path, cfg, tables, findings, readers, overall, axes, stats, did
  .grid2{{display:grid;grid-template-columns:1fr 1fr;gap:1rem}}
  @media(max-width:720px){{.grid2{{grid-template-columns:1fr}}.axis{{grid-template-columns:1fr}}}}
 </style></head><body>
-<header><h1>Data Governance Scan</h1>
-<p>{e(cfg['database'])} on {e(cfg['server'])} &middot; generated {generated} &middot; {TOOL_NAME}</p></header>
+<header><h1>{TOOL_NAME}</h1>
+<p>{e(cfg['database'])} on {e(cfg['server'])} &middot; generated {generated} &middot; version {VERSION} beta</p></header>
 <div class="wrap">
 
 <div class="card"><div class="score">
@@ -604,30 +739,30 @@ reason a governance review fails.</p></div>
 <th>Detected by</th><th>Evidence</th><th class="num">Rows</th></tr></thead>
 <tbody>{''.join(rows_html) or '<tr><td colspan="7">Nothing flagged.</td></tr>'}</tbody></table>
 <p class="muted" style="font-size:.8rem">Showing the first 200; the full list is in
-<span class="mono">governance_findings.csv</span>.</p></div>
+<span class="mono">sensitive_data_findings.csv</span>.</p></div>
 
 <div class="card cta"><h2>What to do with this</h2>
-<p style="font-size:.9rem">This is a point-in-time snapshot from one scan. Governance is a
-standing process: data changes, columns get added, and people join and leave. The hosted
-<b>ODS Data Management Platform</b> turns this report into something that runs by itself:</p>
+<p style="font-size:.9rem">This is a snapshot from one scan. Data changes, columns get added, and
+people join and leave, so the answer changes too. The hosted
+<b>ODS Data Management Platform</b> keeps this report current without anyone running a scan:</p>
 <ul>
  <li><b>Classify once, enforce everywhere</b> &mdash; tag a column sensitive and it is masked or blocked
-     per role in every grid, chart, export, share link, <em>and AI answer</em>.</li>
- <li><b>AI-assisted discovery</b> &mdash; the same value-based inspection you just ran, continuously,
+     per role in every grid, chart, export and share link.</li>
+ <li><b>Scheduled discovery</b> &mdash; the same value-based inspection you just ran, on a schedule,
      with one-click accept into enforced policy.</li>
- <li><b>Proof on demand</b> &mdash; a governance scorecard with trend, a full access audit, and an
+ <li><b>Proof on demand</b> &mdash; a scorecard with trend, a full access audit, and an
      exportable evidence pack for your auditor or board.</li>
- <li><b>Weekly digest</b> &mdash; what changed, what's newly unclassified, who was blocked.</li>
+ <li><b>Weekly digest</b> &mdash; what changed, what is newly unclassified, who was blocked.</li>
 </ul>
-<p style="font-size:.9rem">Ask us for a walkthrough on your own data:
+<p style="font-size:.9rem">Ask for a walkthrough on your own data:
 <a href="mailto:{SUPPORT_EMAIL}">{SUPPORT_EMAIL}</a> &middot;
 <a href="{PLATFORM_URL}">{PLATFORM_URL}</a></p>
 <p style="font-size:.9rem;margin-bottom:0">Free for nonprofits and .org organizations:
 <a href="{SIGNUP_URL}"><b>Load these results into your free workspace</b></a></p></div>
 
 <p class="muted" style="font-size:.75rem;text-align:center">
-{TOOL_NAME} &mdash; free from Org Data Solutions. Read-only: this tool never writes to your database
-and never transmits your data anywhere.</p>
+{TOOL_NAME} {VERSION} beta &mdash; by {e(AUTHOR)}. Free and open source (MIT License).
+Read-only: this tool never writes to your database and never transmits your data anywhere.</p>
 </div></body></html>"""
     with open(path, "w", encoding="utf-8") as fh:
         fh.write(doc)
@@ -635,19 +770,20 @@ and never transmits your data anywhere.</p>
 
 # --------------------------------------------------------------------------
 def main():
-    ap = argparse.ArgumentParser(description=TOOL_NAME, add_help=True)
-    ap.add_argument("--config", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.xml"))
-    ap.add_argument("--out", default=".", help="output folder (default: current)")
+    ap = argparse.ArgumentParser(description=f"{TOOL_NAME} {VERSION} (beta)", add_help=True)
+    ap.add_argument("--config", default=DEFAULT_CONFIG, help="settings file (default: config.xml next to this script)")
+    ap.add_argument("--out", default=DEFAULT_OUT, help="output folder (default: sensitive-data-report next to this script)")
     ap.add_argument("--sample", action="store_true", help="also inspect column VALUES (recommended)")
     ap.add_argument("--rows", type=int, default=50, help="values sampled per column with --sample (default 50)")
     ap.add_argument("--schemas", default="", help="comma-separated schemas to include (default: all)")
+    ap.add_argument("--version", action="version", version=f"{TOOL_NAME} {VERSION} (beta)")
     args = ap.parse_args()
 
+    print(f"\n{TOOL_NAME} {VERSION} (beta)")
     cfg = load_config(args.config)
     schemas = [s.strip() for s in args.schemas.split(",") if s.strip()]
     os.makedirs(args.out, exist_ok=True)
 
-    print(f"\n{TOOL_NAME}")
     print(f"  Connecting to {cfg['database']} on {cfg['server']} ...")
     conn = connect(cfg)
     cur = conn.cursor()
@@ -663,23 +799,23 @@ def main():
     findings = scan(cur, tables, args.sample, args.rows)
     overall, axes, stats = score(tables, findings, readers, args.sample)
 
-    write_csv(os.path.join(args.out, "governance_findings.csv"), findings,
+    write_csv(os.path.join(args.out, "sensitive_data_findings.csv"), findings,
               ["severity", "schema", "table", "column", "type", "flag", "detected_by",
                "confidence", "evidence", "why", "rows"])
-    write_csv(os.path.join(args.out, "governance_tables.csv"),
+    write_csv(os.path.join(args.out, "sensitive_data_tables.csv"),
               [{"schema": t["schema"], "table": t["table"], "rows": t["rows"],
                 "columns": len(t["columns"]), "has_primary_key": t["has_pk"],
                 "flagged_columns": sum(1 for f in findings
                                        if f["schema"] == t["schema"] and f["table"] == t["table"])}
                for t in tables],
               ["schema", "table", "rows", "columns", "has_primary_key", "flagged_columns"])
-    write_csv(os.path.join(args.out, "governance_access.csv"), readers,
+    write_csv(os.path.join(args.out, "sensitive_data_access.csv"), readers,
               ["principal", "kind", "grant", "object"])
-    report = os.path.join(args.out, "governance_report.html")
+    report = os.path.join(args.out, "sensitive_data_report.html")
     write_report(report, cfg, tables, findings, readers, overall, axes, stats, args.sample)
 
     conn.close()
-    print(f"\n  Governance readiness: {overall}/100")
+    print(f"\n  Score: {overall}/100")
     print(f"    {stats['critical']} critical, {stats['high']} high-severity finding(s)")
     if not args.sample:
         print("    (names only - re-run with --sample to inspect values)")

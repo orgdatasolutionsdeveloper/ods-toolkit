@@ -1,43 +1,46 @@
 <#
 .SYNOPSIS
-    ODS SQL Backup - a free tool from Org Data Solutions.
-    Backs up every online database on one or more SQL Server instances to a
-    backup folder you choose, driven by a sidecar PSD1 config file.
+    SQL Server Backup All Databases, version 0.5.0 (beta).
+    By John Stover, Org Data Solutions.
+
+    Backs up every online database on one or more SQL Server instances into
+    a folder you choose, with a dated log and optional retention.
 
 .DESCRIPTION
-    Configuration -- including SQL credentials, the target list, backup root,
-    retention, and per-target overrides -- lives in `backup-config.psd1` next
-    to this script. The script imports it via Import-PowerShellDataFile,
-    merges in any command-line overrides, then iterates each target:
+    Settings (the target list, the backup folder, retention, credentials and
+    per-target overrides) live in backup-config.psd1 next to this script.
+    On the first run with no config file the script asks for the settings on
+    the console and writes the file for you. Command-line parameters override
+    the file. For each target the script:
 
-      1. Enumerates user databases via sys.databases (skips tempdb, snapshots,
+      1. Lists the user databases from sys.databases (skips tempdb, snapshots
          and anything not ONLINE).
-      2. Runs BACKUP DATABASE for each, into <Destination>/<DbName>/<DbName>_<ts>.bak
+      2. Runs BACKUP DATABASE for each one into <Destination>\<DbName>\<DbName>_<timestamp>.bak
       3. Logs everything to a dated file in <BackupRoot>.
-      4. Applies retention if configured.
+      4. Applies retention when it is configured.
 
     There is no default backup folder: set BackupRoot in the config or pass
     -BackupRoot. Backups go only to the folders you name. Nothing is sent to
     Org Data Solutions.
 
-    Compression is auto-enabled where the edition supports it. Express drops
-    to no compression.
+    Compression is used where the edition supports it. Express editions get
+    an uncompressed backup.
 
-    REMOTE BACKUPS -> THIS MACHINE (important):
-    A target's `Destination` is the path the *SQL Server service account*
-    writes to, evaluated on that server. For the local instance, a local
-    folder works. For a REMOTE instance to land files on this machine, share
-    the backup folder (e.g. \\THISBOX\SqlBackups) and set the remote target's
-    Destination to that UNC path. The remote SQL service account needs write
-    access to the share.
+    Remote instances: a target's Destination is the path the SQL Server
+    service account writes to, evaluated on that server. For the local
+    instance a local folder works. For a remote instance to land its files
+    on this machine, share the backup folder (for example \\THISBOX\SqlBackups)
+    and set that target's Destination to the UNC path. The remote SQL Server
+    service account needs write access to the share.
 
-    SECRETS NOTE:
-    `backup-config.psd1` can hold SQL credentials in plaintext. Put the file
-    alongside this script in a folder whose ACL only the operator account can
-    read, or omit DefaultCredential to use Windows (integrated) authentication.
+    Credentials: backup-config.psd1 can hold a SQL password in plain text.
+    Keep the file in a folder only the operator account can read, or leave
+    DefaultCredential out and use Windows authentication.
 
     Requirements: Windows PowerShell 5.1 or PowerShell 7, and the SqlServer
-    (or older SQLPS) module for Invoke-Sqlcmd.
+    module (for Invoke-Sqlcmd). When the module is missing the script
+    installs it for the current user from the PowerShell Gallery.
+    run.cmd in this folder starts the script with no execution-policy change.
 
 .PARAMETER ConfigPath
     Config file to use. Default: backup-config.psd1 next to this script.
@@ -48,35 +51,38 @@
     Destination for any target that does not name its own. No default.
 
 .PARAMETER RetentionDays
-    Override config.RetentionDays. Deletes .bak files older than this many
-    days under every destination, including ones this script did not create.
+    Override the config's RetentionDays. Deletes .bak files older than this
+    many days under every destination, including files this script did not
+    create.
 
 .PARAMETER NoCompression
-    Force compression off regardless of config.
+    Turn compression off regardless of the config.
 
 .PARAMETER Targets
-    Override the entire target list at the command line. Same hashtable
-    shape as the config's Targets array. With -BackupRoot and -Targets, the
-    script runs without a config file (when -ConfigPath is not given).
+    Replace the target list for this run. Same hashtable shape as the
+    config's Targets array. With -BackupRoot and -Targets the script runs
+    without a config file (when -ConfigPath is not given).
 
 .EXAMPLE
-    .\Backup-AllSqlDatabases.ps1
-        Use ./backup-config.psd1 for everything.
+    .\Backup-AllSqlServerDatabases.ps1
+        Use backup-config.psd1 next to the script for everything.
 
 .EXAMPLE
-    .\Backup-AllSqlDatabases.ps1 -RetentionDays 30
-        Use config but override retention.
+    .\Backup-AllSqlServerDatabases.ps1 -RetentionDays 30
+        Use the config but override retention.
 
 .EXAMPLE
-    .\Backup-AllSqlDatabases.ps1 -BackupRoot 'X:\SqlBackups' -Targets @{ Name = 'local'; Instance = 'localhost' }
+    .\Backup-AllSqlServerDatabases.ps1 -BackupRoot 'X:\SqlBackups' -Targets @{ Name = 'local'; Instance = 'localhost' }
         One-off backup of the local default instance with Windows
         authentication, no config file.
 
 .EXAMPLE
-    .\Backup-AllSqlDatabases.ps1 -ConfigPath .\nightly-config.psd1
+    .\Backup-AllSqlServerDatabases.ps1 -ConfigPath .\nightly-config.psd1
 
 .NOTES
-    Copyright (c) 2026 Org Data Solutions. MIT License (see LICENSE).
+    Author: John Stover, Org Data Solutions.
+    Copyright (c) 2026 John Stover. MIT License (see LICENSE).
+    Provided as-is, without warranty. Questions: support@orgdatasolutions.com
 #>
 [CmdletBinding()]
 param(
@@ -88,24 +94,82 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+$ToolName    = 'SQL Server Backup All Databases'
+$ToolVersion = '0.5.0'
 
 # ---------------------------------------------------------------------------
-# Load config (PSD1 sidecar). Cmdline params override config values.
+# First run with no config file: ask for the settings and write the file.
+# ---------------------------------------------------------------------------
+function Format-Psd1String([string]$Value) {
+    return "'" + ($Value -replace "'", "''") + "'"
+}
+
+function New-ConfigInteractively([string]$Path) {
+    if ([Console]::IsInputRedirected -or -not [Environment]::UserInteractive) {
+        throw "Config file not found: $Path. Copy backup-config.example.psd1 to backup-config.psd1 next to this script and fill it in, or run the script from a console and it will ask for the settings."
+    }
+    Write-Host ""
+    Write-Host "No backup-config.psd1 found. Answer these questions and the file will be written to:"
+    Write-Host "  $Path"
+    Write-Host ""
+    $root = (Read-Host "  Backup folder (a local folder like D:\SqlBackups, or \\server\share)").Trim()
+    if (-not $root) { throw "A backup folder is required." }
+    $instance = (Read-Host "  SQL Server instance (localhost, SQL01, or SQL01\SQLEXPRESS) [localhost]").Trim()
+    if (-not $instance) { $instance = 'localhost' }
+    $useSqlLogin = (Read-Host "  Sign in with a SQL login instead of your Windows account? [y/N]").Trim().ToLower()
+    $credBlock = "    # Windows authentication. To use a SQL login instead, add:`r`n    # DefaultCredential = @{ User = 'backup_login'; Password = 'the-password' }`r`n"
+    if ($useSqlLogin -eq 'y' -or $useSqlLogin -eq 'yes') {
+        $user = (Read-Host "  SQL login name").Trim()
+        $secure = Read-Host "  Password (not shown while typing)" -AsSecureString
+        $plain = [Runtime.InteropServices.Marshal]::PtrToStringUni([Runtime.InteropServices.Marshal]::SecureStringToGlobalAllocUnicode($secure))
+        $credBlock = "    DefaultCredential = @{`r`n        User     = $(Format-Psd1String $user)`r`n        Password = $(Format-Psd1String $plain)`r`n    }`r`n"
+    }
+    $days = (Read-Host "  Delete .bak files older than this many days (0 keeps everything) [0]").Trim()
+    if (-not ($days -match '^\d+$')) { $days = '0' }
+    $text = @"
+# SQL Server Backup All Databases - settings.
+# Written by the script on first run. Edit with any text editor.
+# Every setting is explained in backup-config.example.psd1.
+# KEEP THIS FILE PRIVATE if it holds a password.
+@{
+    BackupRoot    = $(Format-Psd1String $root)
+    RetentionDays = $days
+    NoCompression = `$false
+$credBlock
+    Targets = @(
+        @{
+            Name     = 'default'
+            Instance = $(Format-Psd1String $instance)
+        }
+    )
+}
+"@
+    [IO.File]::WriteAllText($Path, $text, (New-Object System.Text.UTF8Encoding($false)))
+    Write-Host ""
+    Write-Host "Written: $Path"
+    Write-Host ""
+}
+
+# ---------------------------------------------------------------------------
+# Load config (PSD1 file). Command-line parameters override config values.
 # ---------------------------------------------------------------------------
 $configGiven = $PSBoundParameters.ContainsKey('ConfigPath')
 if (-not $ConfigPath) {
     $ConfigPath = Join-Path $PSScriptRoot 'backup-config.psd1'
 }
+if (-not (Test-Path -LiteralPath $ConfigPath) -and -not $configGiven -and -not $Targets) {
+    New-ConfigInteractively -Path $ConfigPath
+}
 if (Test-Path -LiteralPath $ConfigPath) {
     $cfg = Import-PowerShellDataFile -Path $ConfigPath
 }
 elseif (-not $configGiven -and $Targets) {
-    # Ad-hoc run: everything comes from the command line.
+    # One-off run: everything comes from the command line.
     $cfg = @{}
     $ConfigPath = '(none: command line only)'
 }
 else {
-    throw "Config file not found: $ConfigPath  --  copy backup-config.example.psd1 to backup-config.psd1 next to this script and fill in your settings, or pass -BackupRoot and -Targets."
+    throw "Config file not found: $ConfigPath. Copy backup-config.example.psd1 to backup-config.psd1 next to this script and fill in your settings, or pass -BackupRoot and -Targets."
 }
 
 if (-not $BackupRoot)              { $BackupRoot    = $cfg.BackupRoot }
@@ -131,7 +195,7 @@ if ($cfg.DefaultCredential) {
 }
 
 # ---------------------------------------------------------------------------
-# Load a SQL module that provides Invoke-Sqlcmd
+# Load a module that provides Invoke-Sqlcmd; install SqlServer if none exists
 # ---------------------------------------------------------------------------
 if (-not (Get-Command Invoke-Sqlcmd -ErrorAction SilentlyContinue)) {
     if (Get-Module -ListAvailable -Name SqlServer) {
@@ -139,7 +203,18 @@ if (-not (Get-Command Invoke-Sqlcmd -ErrorAction SilentlyContinue)) {
     } elseif (Get-Module -ListAvailable -Name SQLPS) {
         Import-Module SQLPS -DisableNameChecking -ErrorAction Stop
     } else {
-        throw "Neither the 'SqlServer' nor 'SQLPS' module is available. Install with: Install-Module SqlServer -Scope AllUsers"
+        Write-Host "The SqlServer PowerShell module is not installed. Installing it for the current user from the PowerShell Gallery (one time, a minute or two) ..."
+        try {
+            # Older Windows PowerShell builds default to TLS 1.0, which the gallery refuses.
+            [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+            if (-not (Get-PackageProvider -Name NuGet -ListAvailable -ErrorAction SilentlyContinue)) {
+                Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -Scope CurrentUser | Out-Null
+            }
+            Install-Module -Name SqlServer -Scope CurrentUser -Force -AllowClobber -ErrorAction Stop
+            Import-Module SqlServer -ErrorAction Stop
+        } catch {
+            throw "Could not install the SqlServer module automatically: $($_.Exception.Message). Install it by hand in PowerShell with: Install-Module SqlServer -Scope CurrentUser"
+        }
     }
 }
 $invokeCmd = Get-Command Invoke-Sqlcmd
@@ -204,7 +279,7 @@ function Get-SqlConnArgs {
     return $a
 }
 
-Write-Log "===== Backup run started: config=$ConfigPath ($($Targets.Count) target(s)) ====="
+Write-Log "===== $ToolName $ToolVersion (beta): run started, config=$ConfigPath ($($Targets.Count) target(s)) ====="
 
 $grandSuccess = 0
 $grandFailed  = @()

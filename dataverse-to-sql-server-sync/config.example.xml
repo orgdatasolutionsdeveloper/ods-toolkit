@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- ODS Dataverse to SQL Sync - configuration.
-     Copy this file to config.xml next to Sync-DataverseToSql.ps1 and fill it in.
+<!-- Dataverse to SQL Server Sync - settings. By John Stover, Org Data Solutions.
+     You do not have to create config.xml by hand: run the script once and it
+     asks for the settings and writes the file. To fill it in yourself, copy
+     this file to config.xml next to Sync-DataverseToSqlServer.ps1 and edit it.
      KEEP config.xml PRIVATE - it holds a client secret and a SQL password.
 
      Dataverse
@@ -10,8 +12,9 @@
        ClientSecret  a client secret on that app registration. Leave it empty
                      (or set it to INTERACTIVE) to sign in as yourself with the
                      Az.Accounts module instead.
-       The app registration must be an Application User on the environment
-       with a security role that can read the tables you sync.
+       The app registration must be an application user on the environment
+       with a security role that can read the tables you sync. The steps are
+       in docs\DATAVERSE-APP-REGISTRATION.md.
 
      Sql
        Server / Database   the SQL Server or Azure SQL database to write to

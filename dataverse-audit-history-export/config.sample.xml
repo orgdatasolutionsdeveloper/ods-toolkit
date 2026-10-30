@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Dataverse Audit History Export - connection settings.
+     By John Stover, Org Data Solutions.
+
+     You do not have to create this file by hand: run the tool once and it
+     asks for these four values and writes config.xml for you. To fill it in
+     yourself, copy this file to config.xml next to the script and edit it.
+     KEEP config.xml PRIVATE: it contains a client secret.
+
+     OrgUrl:       your environment URL, for example https://yourorg.crm.dynamics.com
+     TenantId:     Microsoft Entra "Directory (tenant) ID"
+     ClientId:     the app registration's "Application (client) ID"
+     ClientSecret: the Value of a client secret created on that registration
+
+     The app registration must be an application user on the environment
+     with a security role that can read audit data. The steps are in
+     docs/DATAVERSE-APP-REGISTRATION.md. Questions: support@orgdatasolutions.com -->
+<config>
+  <OrgUrl>https://yourorg.crm.dynamics.com</OrgUrl>
+  <TenantId>00000000-0000-0000-0000-000000000000</TenantId>
+  <ClientId>00000000-0000-0000-0000-000000000000</ClientId>
+  <ClientSecret>paste-your-client-secret-here</ClientSecret>
+</config>

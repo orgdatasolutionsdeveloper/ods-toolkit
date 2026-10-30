@@ -1,29 +1,31 @@
 # Code signing for the PowerShell tools
 
 **Status: not signed yet.** A code-signing certificate still has to be
-bought. Until then, users must run `Unblock-File` after checking the
-SHA-256 checksums (see the top-level README), and the release notes should
-say so plainly.
+bought. Until then the `run.cmd` launcher in each tool folder starts
+PowerShell with `-ExecutionPolicy Bypass`, so the scripts run without any
+change to your execution policy. Anyone who runs a `.ps1` file directly must
+first check the SHA-256 checksums and then run `Unblock-File` on the folder
+(see the top-level README).
 
 ## Why it matters
 
 Windows marks files downloaded from the internet. Under the default
 execution policy (`RemoteSigned`), PowerShell refuses to run a marked script
 unless it carries a valid Authenticode signature. Unsigned scripts also draw
-warnings from SmartScreen and endpoint security tools, which is a poor first
-impression for a governance product. Signing proves the script came from
-Org Data Solutions and was not changed after release.
+warnings from SmartScreen and endpoint security tools. Signing proves the
+script came from John Stover at Org Data Solutions and was not changed after
+release.
 
 Files to sign (Authenticode applies to PowerShell files only):
 
 | File | Signed? |
 |---|---|
-| `ods-dataverse-sql-sync/Sync-DataverseToSql.ps1` | Yes |
-| `ods-dataverse-sql-sync/Modules/Ods.SqlUpsert.psm1` | Yes (the script imports it, so `AllSigned` needs it signed too) |
-| `ods-sql-backup/Backup-AllSqlDatabases.ps1` | Yes |
-| `ods-sql-backup/backup-config.example.psd1` | Optional (data file, not executed) |
+| `dataverse-to-sql-server-sync/Sync-DataverseToSqlServer.ps1` | Yes |
+| `dataverse-to-sql-server-sync/Modules/Ods.SqlUpsert.psm1` | Yes (the script imports it, so `AllSigned` needs it signed too) |
+| `sql-server-backup-all-databases/Backup-AllSqlServerDatabases.ps1` | Yes |
+| `sql-server-backup-all-databases/backup-config.example.psd1` | Optional (data file, not executed) |
 | `Write-Checksums.ps1` | Yes |
-| Python, SQL, XML, Markdown | No Authenticode. Covered by `SHA256SUMS.txt`. |
+| `run.cmd`, Python, SQL, XML, Markdown | No Authenticode. Covered by `SHA256SUMS.txt`. |
 
 ## Buying the certificate
 
@@ -60,9 +62,9 @@ $cert = Get-ChildItem Cert:\CurrentUser\My -CodeSigningCert |
         Select-Object -First 1
 
 $files = @(
-  'ods-dataverse-sql-sync\Sync-DataverseToSql.ps1',
-  'ods-dataverse-sql-sync\Modules\Ods.SqlUpsert.psm1',
-  'ods-sql-backup\Backup-AllSqlDatabases.ps1',
+  'dataverse-to-sql-server-sync\Sync-DataverseToSqlServer.ps1',
+  'dataverse-to-sql-server-sync\Modules\Ods.SqlUpsert.psm1',
+  'sql-server-backup-all-databases\Backup-AllSqlServerDatabases.ps1',
   'Write-Checksums.ps1'
 )
 foreach ($f in $files) {
@@ -82,7 +84,7 @@ expires. Cloud-signing services ship their own command-line tool instead of
 
 Signing changes a file's bytes, so the order matters:
 
-1. Final edits, then the checks: `python -I -m py_compile` on both Python
+1. Final edits, then the checks: `python -m py_compile` on both Python
    tools, and a clean `[System.Management.Automation.Language.Parser]::ParseFile`
    on every `.ps1` / `.psm1`.
 2. Sign the PowerShell files (above) and verify every signature is `Valid`.

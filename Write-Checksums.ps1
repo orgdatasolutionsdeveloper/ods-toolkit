@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Writes or verifies SHA256SUMS.txt for every file in the ODS Offline Toolkit.
+    Writes or verifies SHA256SUMS.txt for every file in this toolkit.
 
 .DESCRIPTION
     Write mode (default): hashes every file under the toolkit folder (the
@@ -37,7 +37,8 @@
         Check a downloaded copy against its SHA256SUMS.txt.
 
 .NOTES
-    Copyright (c) 2026 Org Data Solutions. MIT License (see LICENSE).
+    Author: John Stover, Org Data Solutions.
+    Copyright (c) 2026 John Stover. MIT License (see LICENSE).
 #>
 [CmdletBinding()]
 param(
@@ -62,8 +63,7 @@ $skipPatterns = @(
     '\.pyc$',
     '(^|/)logs/',
     '(^|/)audit-export/',
-    '(^|/)governance_report\.html$',
-    '(^|/)governance_[a-z]+\.csv$',
+    '(^|/)sensitive-data-report/',
     '\.bak$'
 )
 # Real configs hold passwords / client secrets: skip them AND warn.

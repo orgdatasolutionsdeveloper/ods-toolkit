@@ -1,9 +1,9 @@
 <#
 .SYNOPSIS
-    Bulk upsert + schema-evolve helpers, extracted from Sync-DataverseToSql.ps1
-    so the main thread (SQLConnector class) and parallel runspaces (which
-    cannot share class instances across runspace boundaries) call the
-    same code.
+    Bulk upsert and schema-evolve helpers for Sync-DataverseToSqlServer.ps1
+    (Dataverse to SQL Server Sync, version 0.6.0 beta). Kept in a module so
+    the main thread (SQLConnector class) and the parallel runspaces, which
+    cannot share class instances, call the same code.
 
     Exported functions
     ------------------
@@ -26,7 +26,8 @@
     Success / Error so callers can route messages to their own loggers
     (SyncLogger in the main thread, Write-TableLog in runspaces).
 
-    Copyright (c) 2026 Org Data Solutions. MIT License (see LICENSE).
+    Author: John Stover, Org Data Solutions.
+    Copyright (c) 2026 John Stover. MIT License (see LICENSE).
 #>
 
 Set-StrictMode -Version 2.0

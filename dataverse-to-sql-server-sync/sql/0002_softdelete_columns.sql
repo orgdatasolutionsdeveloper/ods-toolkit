@@ -10,7 +10,7 @@
    ---
    Incremental sync only sees rows that still exist in Dataverse, so a row
    deleted there stays in SQL. The reconcile pass
-   (Sync-DataverseToSql.ps1 -ReconcileDeletes) compares primary keys and sets
+   (Sync-DataverseToSqlServer.ps1 -ReconcileDeletes) compares primary keys and sets
    is_active = 0 plus detected_missing_utc on rows that are gone. Nothing is
    physically deleted. The vw_<table> views the sync builds filter on
    is_active = 1 automatically once the column exists.

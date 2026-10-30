@@ -1,7 +1,12 @@
 # =============================================================================
-#  backup-config.example.psd1 -- copy to backup-config.psd1 and edit.
+#  backup-config.example.psd1 - every setting of SQL Server Backup All
+#  Databases, by John Stover, Org Data Solutions.
 #
-#  Read by Backup-AllSqlDatabases.ps1 (next to it) via
+#  You do not have to create backup-config.psd1 by hand: run the script
+#  once and it asks for the settings and writes the file. To fill it in
+#  yourself, copy this file to backup-config.psd1 next to the script and edit it.
+#
+#  Read by Backup-AllSqlServerDatabases.ps1 (next to it) via
 #  Import-PowerShellDataFile. PSD1 is PowerShell-native data: hashtables,
 #  arrays, strings, numbers and booleans only. No code runs from this file.
 #

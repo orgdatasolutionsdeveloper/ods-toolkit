@@ -1,91 +1,81 @@
 <#
 .SYNOPSIS
-    ODS Dataverse to SQL Sync - a free tool from Org Data Solutions.
+    Dataverse to SQL Server Sync, version 0.6.0 (beta).
+    By John Stover, Org Data Solutions.
+
     Copies Dataverse / Dynamics 365 tables into a SQL Server or Azure SQL
-    database you own, and keeps them up to date incrementally.
+    database you own, and keeps them up to date with incremental runs.
 
 .DESCRIPTION
-    Features:
-    1. Prefix-based table discovery (sync every table matching prefixes such
-       as new_ or cr123_), plus explicitly listed tables.
-    2. Friendly-name SQL views (vw_<table>) built from Dataverse metadata.
-    3. Data dictionary tables: ods_datadictionary_tables, _columns and
-       _relationships.
-    4. ExcludeTables config: skip specific tables by logical name.
-    5. Parallel sync: up to N tables at once (default 5) via PowerShell runspaces.
-    6. Optional soft-delete reconcile pass (-ReconcileDeletes, or bundled with
-       a refresh via -IncludeReconcile).
-    7. Entity-set names and primary keys read from Dataverse metadata, so
-       irregular plurals and non-standard keys sync correctly.
-    8. Manual overrides: -Table (only these tables, then a source-vs-target
-       row-count check), -FullLoad (ignore the watermark), -Force (bypass the
-       single-instance guard).
+    What it does:
+    1. Finds the tables to copy: the ones listed in config.xml, every table
+       whose name starts with a prefix you give (new_, cr123_, ...), or all
+       of them. ExcludeTables removes names from that list.
+    2. Copies each table into SQL and, on later runs, fetches only the rows
+       changed since the last run (a modifiedon watermark per table). Up to
+       N tables run at once (MaxParallel, default 5).
+    3. Builds friendly-name views (vw_<table>) with Dataverse display names
+       as column names, and a data dictionary (ods_datadictionary_tables,
+       _columns, _relationships).
+    4. Optionally marks rows that were deleted in Dataverse (-ReconcileDeletes
+       or -IncludeReconcile). It never deletes a row in SQL.
+    5. Reads entity-set names and primary keys from Dataverse metadata, so
+       irregular plurals and non-standard keys copy correctly.
+    6. Manual overrides: -Table (only these tables, then a row-count check),
+       -FullLoad (ignore the watermark), -Force (bypass the single-instance
+       guard).
 
     Data flows from your Dataverse environment to your SQL database only.
     Nothing is sent to Org Data Solutions.
 
-    Requirements: PowerShell 7.2 or later, an Entra ID app registration that
-    is an Application User on the environment, and a SQL login that can
-    create tables in the target database. Copy config.example.xml to
-    config.xml next to this script and fill it in. The sql\ folder holds the
-    optional ops-schema scripts (run logs, SQL-backed watermarks, soft-delete
-    columns). See README.md.
+    Requirements: PowerShell 7.2 or later; an Entra ID app registration that
+    is an application user on the environment (see
+    docs\DATAVERSE-APP-REGISTRATION.md); and a SQL login that can create
+    tables and views in the target database. On the first run with no
+    config.xml the script asks for the settings on the console and writes the
+    file. The sql\ folder holds optional scripts for run logs, SQL-backed
+    watermarks and soft-delete columns. run.cmd in this folder installs
+    PowerShell 7 when it is missing and starts the script. See README.md.
 
 .EXAMPLE
-    .\Sync-DataverseToSql.ps1 -TestConnection
+    .\Sync-DataverseToSqlServer.ps1 -TestConnection
         Check the Dataverse and SQL connections, then exit.
 
 .EXAMPLE
-    .\Sync-DataverseToSql.ps1
+    .\Sync-DataverseToSqlServer.ps1
         Incremental data sync (schedule hourly).
 
 .EXAMPLE
-    .\Sync-DataverseToSql.ps1 -Mode Refresh
+    .\Sync-DataverseToSqlServer.ps1 -Mode Refresh
         Data sync plus data dictionary and friendly views (schedule daily).
 
 .EXAMPLE
-    .\Sync-DataverseToSql.ps1 -Mode Refresh -IncludeReconcile
+    .\Sync-DataverseToSqlServer.ps1 -Mode Refresh -IncludeReconcile
         Daily refresh, then the soft-delete reconcile pass, in one scheduled task.
 
 .EXAMPLE
-    .\Sync-DataverseToSql.ps1 -ReconcileDeletes -DryRun
+    .\Sync-DataverseToSqlServer.ps1 -ReconcileDeletes -DryRun
         Show which rows have disappeared from Dataverse, without changing SQL.
 
 .EXAMPLE
-    .\Sync-DataverseToSql.ps1 -Table contact -FullLoad
+    .\Sync-DataverseToSqlServer.ps1 -Table contact -FullLoad
         Reload one table in full, then compare Dataverse and SQL row counts
         for it. Add -Force only when the single-instance lock is held by a run
         you know is not touching that table.
 
 .NOTES
-    Copyright (c) 2026 Org Data Solutions. MIT License (see LICENSE).
+    Author: John Stover, Org Data Solutions.
+    Copyright (c) 2026 John Stover. MIT License (see LICENSE).
+    Provided as-is, without warranty. Questions: support@orgdatasolutions.com
+
+    The helper functions in this script (Resolve-TableList,
+    Build-DataDictionary, Build-FriendlyViews, Invoke-ReconcileDeletes) take
+    their connector and logger arguments without a class type. PowerShell
+    gives a class a new identity each time the script is parsed in the same
+    session, and a typed parameter would then reject an instance made by an
+    earlier parse ("Cannot convert SQLConnector to SQLConnector").
 #>
 #Requires -Version 7.2
-
-# =============================================================================
-# Note on parameter typing
-# =============================================================================
-# Standalone helper functions in this script (Resolve-TableList,
-# Build-DataDictionary, Build-FriendlyViews, Invoke-ReconcileDeletes) accept
-# their connector/logger arguments as plain $name with no class-type
-# annotation, even though they expect SQLConnector / DataverseConnector /
-# SyncLogger / OpsRunLog instances.
-#
-# Why: PowerShell class types are scoped to their parse session. When this
-# script is run multiple times in the same PowerShell session (especially
-# during dev -- failed param attempts that partially parse, then a retry that
-# re-parses), the runtime ends up with two SQLConnector types with the same
-# name but distinct identity. A function with `[SQLConnector]$SQL` captures
-# one identity at parse time; an instance constructed in a later parse has
-# the other identity. PowerShell then fails with the unhelpful error:
-#     "Cannot convert SQLConnector to SQLConnector".
-# Untyped parameters sidestep this -- method dispatch on the object is
-# duck-typed and doesn't care about class identity.
-#
-# Class methods *inside* class bodies (e.g. SQLConnector.BulkUpsert with its
-# [SyncLogger]$logger parameter) are unaffected -- they parse atomically with
-# the class definition, so the captured identity always matches.
-# =============================================================================
 
 [CmdletBinding()]
 param(
@@ -118,9 +108,7 @@ param(
 
     # Reconcile-only: safety threshold. If more than this fraction of a
     # table's active rows would be flagged as missing in a single pass,
-    # that table is skipped and routed to ops.review_queue. 0.75 default
-    # (raised from 0.5 after first real run had 4 false positives on
-    # legitimately high-churn replicas).
+    # that table is skipped and routed to ops.review_queue.
     [Parameter(Mandatory=$false)]
     [double]$MaxMissingPct = 0.75,
 
@@ -165,6 +153,9 @@ param(
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = "Stop"
 
+$script:ToolName    = "Dataverse to SQL Server Sync"
+$script:ToolVersion = "0.6.0"
+
 # Shared bulk upsert / schema-evolve helpers. Same module is imported by each
 # parallel runspace so both call paths share one implementation.
 $script:OdsModulePath = Join-Path $PSScriptRoot "Modules\Ods.SqlUpsert.psm1"
@@ -177,7 +168,7 @@ Import-Module $script:OdsModulePath -Force
 # (e.g. hourly) and a daily -Mode Refresh. They share one watermark store
 # (ops.crm_sync_watermark / state.json) and the same target tables, so two
 # concurrent runs can race the watermark and deadlock the MERGEs. A global mutex
-# ensures only one Sync-DataverseToSql runs at a time; a second run logs and
+# ensures only one copy of this script runs at a time; a second run logs and
 # skips this cycle (the in-flight run, or the next scheduled run, covers the data).
 # Connectivity tests (-TestConnection) are exempt. We never call ReleaseMutex:
 # the mutex is released when this pwsh process exits, and the next run treats the
@@ -193,7 +184,7 @@ if (-not $TestConnection -and -not $Force) {
             $haveLock = $true
         }
         if (-not $haveLock) {
-            Write-Host "Another Sync-DataverseToSql instance is already running; skipping this run." -ForegroundColor Yellow
+            Write-Host "Another copy of Sync-DataverseToSqlServer.ps1 is already running; skipping this run." -ForegroundColor Yellow
             exit 0
         }
     } catch [System.UnauthorizedAccessException] {
@@ -568,6 +559,11 @@ class DataverseConnector {
             $token = $response.access_token
         }
         else {
+            # Interactive sign-in needs the Az.Accounts module; install it on first use.
+            if (-not (Get-Module -ListAvailable -Name Az.Accounts)) {
+                Write-Host "Interactive sign-in needs the Az.Accounts module. Installing it for the current user from the PowerShell Gallery (one time) ..." -ForegroundColor Yellow
+                Install-Module -Name Az.Accounts -Scope CurrentUser -Force -AllowClobber -ErrorAction Stop
+            }
             if (-not (Get-Module -Name Az.Accounts)) { Import-Module Az.Accounts -ErrorAction Stop }
             $context = Get-AzContext
             if (-not $context) { $context = Connect-AzAccount }
@@ -583,7 +579,7 @@ class DataverseConnector {
             "OData-MaxVersion"   = "4.0"
             "OData-Version"      = "4.0"
             Prefer               = "odata.maxpagesize=$($this.PageSize)"
-            "User-Agent"         = "DataverseSqlSync/3.0"
+            "User-Agent"         = "DataverseToSqlServerSync/0.6"
         }
     }
 
@@ -2219,7 +2215,97 @@ WHERE t.is_active = 1;  -- belt-and-suspenders: don't restamp already-flagged ro
 # REGION: MAIN EXECUTION
 # ==============================================================================
 
-if (-not (Test-Path $ConfigPath)) { Write-Error "Config file not found: $ConfigPath"; exit 1 }
+# ==============================================================================
+# REGION: FIRST RUN - no config.xml yet: ask for the settings and write it
+# ==============================================================================
+function New-ConfigInteractively([string]$Path) {
+    if ([Console]::IsInputRedirected -or -not [Environment]::UserInteractive) {
+        Write-Host "Config file not found: $Path" -ForegroundColor Red
+        Write-Host "Copy config.example.xml to config.xml next to this script and fill it in, or run the script from a console and it will ask for the settings." -ForegroundColor Red
+        exit 1
+    }
+    $esc = { param($s) [System.Security.SecurityElement]::Escape([string]$s) }
+    Write-Host ""
+    Write-Host "No config.xml found. Answer these questions and the file will be written to:"
+    Write-Host "  $Path"
+    Write-Host "The Dataverse values come from the app registration; see docs\DATAVERSE-APP-REGISTRATION.md."
+    Write-Host ""
+    $orgUrl = (Read-Host "  Environment URL (for example https://yourorg.crm.dynamics.com)").Trim()
+    if ($orgUrl -and $orgUrl -notmatch '^https?://') { $orgUrl = "https://$orgUrl" }
+    $tenantId = (Read-Host "  Directory (tenant) ID").Trim()
+    $clientId = (Read-Host "  Application (client) ID").Trim()
+    $secureSecret = Read-Host "  Client secret value (not shown while typing; leave empty to sign in as yourself)" -AsSecureString
+    $clientSecret = [Runtime.InteropServices.Marshal]::PtrToStringUni([Runtime.InteropServices.Marshal]::SecureStringToGlobalAllocUnicode($secureSecret))
+    if (-not ($orgUrl -and $tenantId -and $clientId)) { Write-Host "The environment URL, tenant id and client id are required." -ForegroundColor Red; exit 1 }
+    Write-Host ""
+    $sqlServer = (Read-Host "  SQL Server to write to (for example SQL01, SQL01\SQLEXPRESS or yourserver.database.windows.net)").Trim()
+    $sqlDb = (Read-Host "  Database to write to (an empty database made for this copy)").Trim()
+    if (-not ($sqlServer -and $sqlDb)) { Write-Host "The SQL Server name and database name are required." -ForegroundColor Red; exit 1 }
+    $useSqlLogin = (Read-Host "  Sign in to SQL with a SQL login instead of your Windows account? [y/N]").Trim().ToLower()
+    $sqlUser = ""; $sqlPass = ""
+    if ($useSqlLogin -eq 'y' -or $useSqlLogin -eq 'yes') {
+        $sqlUser = (Read-Host "  SQL login name").Trim()
+        $securePass = Read-Host "  SQL password (not shown while typing)" -AsSecureString
+        $sqlPass = [Runtime.InteropServices.Marshal]::PtrToStringUni([Runtime.InteropServices.Marshal]::SecureStringToGlobalAllocUnicode($securePass))
+    }
+    Write-Host ""
+    $tablesIn = (Read-Host "  Tables to copy, comma-separated logical names [account,contact]").Trim()
+    if (-not $tablesIn) { $tablesIn = "account,contact" }
+    $prefixIn = (Read-Host "  Also copy every table whose name starts with these prefixes, comma-separated (for example new_), or leave empty").Trim()
+    $tableXml = ""
+    foreach ($t in ($tablesIn -split ',')) {
+        $name = $t.Trim(); if (-not $name) { continue }
+        $tableXml += "    <Table>`r`n      <LogicalName>$(& $esc $name)</LogicalName>`r`n    </Table>`r`n"
+    }
+    $prefixXml = "    <Prefixes />`r`n"
+    if ($prefixIn) {
+        $prefixXml = "    <Prefixes>`r`n"
+        foreach ($p in ($prefixIn -split ',')) { $name = $p.Trim(); if ($name) { $prefixXml += "      <Prefix>$(& $esc $name)</Prefix>`r`n" } }
+        $prefixXml += "    </Prefixes>`r`n"
+    }
+    $text = @"
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Dataverse to SQL Server Sync - settings.
+     Written by the script on first run. Edit with any text editor; every
+     setting is explained in config.example.xml.
+     KEEP THIS FILE PRIVATE: it holds a client secret and may hold a SQL password. -->
+<Config>
+  <Dataverse>
+    <OrgUrl>$(& $esc $orgUrl)</OrgUrl>
+    <TenantId>$(& $esc $tenantId)</TenantId>
+    <ClientId>$(& $esc $clientId)</ClientId>
+    <ClientSecret>$(& $esc $clientSecret)</ClientSecret>
+  </Dataverse>
+  <Sql>
+    <Server>$(& $esc $sqlServer)</Server>
+    <Database>$(& $esc $sqlDb)</Database>
+    <Username>$(& $esc $sqlUser)</Username>
+    <Password>$(& $esc $sqlPass)</Password>
+    <TablePrefix />
+  </Sql>
+  <Paths>
+    <StatePath>logs\sync_state.json</StatePath>
+    <LogPath>logs\sync_log.txt</LogPath>
+  </Paths>
+  <Performance>
+    <BatchSize>5000</BatchSize>
+    <PageSize>5000</PageSize>
+    <MaxParallel>5</MaxParallel>
+  </Performance>
+  <Tables>
+    <SyncAllTables>false</SyncAllTables>
+$prefixXml    <ExcludeTables />
+$tableXml  </Tables>
+</Config>
+"@
+    [IO.File]::WriteAllText($Path, $text, (New-Object System.Text.UTF8Encoding($false)))
+    Write-Host ""
+    Write-Host "Written: $Path"
+    Write-Host "Next: .\Sync-DataverseToSqlServer.ps1 -TestConnection checks both connections and changes nothing."
+    Write-Host ""
+}
+
+if (-not (Test-Path $ConfigPath)) { New-ConfigInteractively -Path $ConfigPath }
 
 try { [xml]$xml = Get-Content $ConfigPath -Raw; $cfg = $xml.Config }
 catch { Write-Error "Invalid XML Config"; exit 1 }
@@ -2249,7 +2335,7 @@ $PageSize = [int](Get-XmlProp $cfg.Performance "PageSize" 5000)
 $MaxParallel = [int](Get-XmlProp $cfg.Performance "MaxParallel" 5)
 
 $Logger = [SyncLogger]::new($LogPath)
-$Logger.Info("=== Job Started (v3.0 - Prefix/Dictionary/Views) ===")
+$Logger.Info("=== $($script:ToolName) $($script:ToolVersion) (beta): job started ===")
 
 # Apply ops.pipeline_config overrides if present. Fails open (XML values stand
 # when the ops schema isn't created or the table is empty).
@@ -2502,7 +2588,7 @@ try {
                     "OData-MaxVersion" = "4.0"
                     "OData-Version"    = "4.0"
                     Prefer             = "odata.maxpagesize=$PageSize"
-                    "User-Agent"       = "DataverseSqlSync/3.0"
+                    "User-Agent"       = "DataverseToSqlServerSync/0.6"
                 }
 
                 # --- Read last sync state ---

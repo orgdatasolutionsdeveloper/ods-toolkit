@@ -1,108 +1,95 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-=============================================================================
- ODS Dataverse Audit Export - a free tool from Org Data Solutions
-=============================================================================
+Dataverse Audit History Export
+Version 0.5.0 (beta)
+By John Stover, Org Data Solutions
 
- What it does
- ------------
- Answers two questions every Dataverse / Dynamics 365 / Power Platform admin
- (including teams on association-management systems built on Dataverse)
- eventually asks:
+Answers two questions for anyone who administers a Dataverse, Dynamics 365
+or Power Platform environment:
 
-   1. "Is auditing actually turned on, and for which tables and columns?"
-   2. "How do I get my audit history OUT of Dataverse?"
+  1. Is auditing actually turned on, and for which tables and columns?
+  2. How do I get the audit history out of Dataverse?
 
- Microsoft provides no bulk export from the audit views - the data is only
- reachable through the Web API. This script does it for you, with nothing but
- a stock Python 3.9+ install (standard library only; no packages to install).
+Microsoft provides no bulk export from the audit views; the data is only
+reachable through the Web API. This script does that with a stock Python
+3.9 or later install. Standard library only: nothing to install.
 
- Two modes:
+Two modes
+  python dataverse_audit_history_export.py explore
+      Audit settings check. Writes:
+        audit_environment.csv        environment settings: on/off, retention,
+                                     user-access auditing, earliest event kept
+        audit_coverage.csv           one row per table: auditing on/off, and
+                                     whether a managed solution locks it
+      Add --columns to also write:
+        audit_coverage_columns.csv   one row per column of every audited
+                                     table (slower: one API call per table)
 
-   python ods_audit_export.py explore
-       Audit-readiness check. Writes:
-         audit_environment.csv        org-level settings (on/off, retention,
-                                      user-access auditing, earliest event)
-         audit_coverage.csv           one row per table: auditing on/off,
-                                      whether a managed solution locks it
-       Add --columns to also write:
-         audit_coverage_columns.csv   one row per column of every audited
-                                      table (slower: one API call per table)
+  python dataverse_audit_history_export.py export
+      Exports audit events to ONE CSV PER TABLE (audit_contact.csv,
+      audit_account.csv, ...): one row per changed field, with the old and
+      new value, who made the change, the calling (impersonating) user, and
+      the transaction id that groups a multi-field save.
+        --days=30                window to export (default: the last 30 days)
+        --since=2026-01-01       or an explicit start date (overrides --days)
+        --tables=contact,account limit to these tables (logical names)
+        --details                also call RetrieveAuditDetails for events
+                                 whose old/new values are not on the audit
+                                 row itself (slower: one API call per event)
+        --detail-cap=500         cap on those per-event calls (default 500)
 
-   python ods_audit_export.py export
-       Exports audit events to ONE CSV PER TABLE (audit_contact.csv,
-       audit_account.csv, ...) - one row per changed field, with old and new
-       values, who made the change, the calling (impersonating) user, and the
-       transaction id that groups multi-field saves.
-         --days=30                window to export (default: last 30 days)
-         --since=2026-01-01       or an explicit start date (overrides --days)
-         --tables=contact,account limit to specific tables (logical names)
-         --details                also call RetrieveAuditDetails for events
-                                  whose old/new values aren't in the audit row
-                                  itself (slower: one API call per event)
-         --detail-cap=500         cap on those per-event calls (default 500)
+  Run with no mode from a command prompt and it asks which one you want.
+  On Windows, run.cmd in this folder does the same and installs Python
+  first when it is missing.
 
- Both modes also (re)generate audit_report.html in the output folder - a
- branded, shareable one-page summary (highlights, coverage, top tables and
- users) that links back to the CSVs for the full row-level detail. Run
- explore then export and the page accumulates both.
+Both modes also rewrite audit_report.html in the output folder: a one-page
+summary (highlights, coverage, most-changed tables, most active users) that
+points to the CSV files for the row-level detail. Run explore, then export,
+and the page shows both.
 
- CSV was chosen over JSON deliberately: it streams row-by-row (no memory
- blow-ups on large histories), splits naturally per table, and your
- membership team can open it straight in Excel.
+CSV rather than JSON on purpose: it streams row by row (no memory problems
+on large histories), splits naturally per table, and opens in Excel.
 
- Setup (one-time, ~10 minutes)
- -----------------------------
- 1. Create an app registration in Microsoft Entra ID and give it a client
-    secret ("server-to-server" / client-credentials access).
- 2. In Power Platform admin center, add it as an Application User on your
-    environment with a security role that can read audit data (System
-    Administrator covers it).
- 3. Copy config.sample.xml to config.xml next to this script and fill in
-    your environment URL, tenant id, client id, and client secret.
-    (Keep config.xml out of source control - it holds a secret.)
+Setup
+  The script signs in as an app registration. Creating one takes about ten
+  minutes; the steps are in docs/DATAVERSE-APP-REGISTRATION.md in this
+  repository. On the first run with no config.xml the script asks for the
+  environment URL, tenant id, client id and client secret on the console
+  and writes config.xml next to this script. Keep config.xml private: it
+  holds the secret.
 
- If auditing turns out to be OFF (mode 1 will tell you), turn it on in
- Power Platform admin center -> Environment -> Settings -> Audit settings,
- and per-table under Tables -> <table> -> Properties -> Audit changes to its data.
- Auditing only records changes made AFTER it is enabled.
+If auditing turns out to be off (explore tells you), turn it on in the
+Power Platform admin center: Environment > Settings > Audit settings, and
+per table under Tables > (table) > Properties > Audit changes to its data.
+Auditing only records changes made after it is turned on.
 
- -----------------------------------------------------------------------------
- Copyright (c) 2026 Org Data Solutions. MIT License (see LICENSE): free to
- use, change and share, as-is, no warranty.
-
- It exports snapshots. If you'd rather have your audit history continuously
- mirrored into a managed warehouse - with searchable activity reports,
- before/after drill-through, staff stewardship summaries, high-risk change
- alerts, and a weekly email digest for your executives - that's exactly what
- our hosted Audit Analyzer does, and we run it for you.
-
-   Org Data Solutions - John Stover
-   support@orgdatasolutions.com
-   https://orgdatasolutions.com
-
- Load these results into your free workspace (free for nonprofits and .org
- organizations): https://data.orgdatasolutions.com/signup?src=toolkit-audit-export
- -----------------------------------------------------------------------------
+Copyright (c) 2026 John Stover, Org Data Solutions. MIT License (see LICENSE).
+Provided as-is, without warranty. Questions: support@orgdatasolutions.com
 """
 from __future__ import annotations
 
 import csv
 import datetime
+import getpass
 import json
+import os
 import re
 import sys
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from xml.sax.saxutils import escape as xml_escape
 
-# ============================================================================
-# CONFIGURATION - edit these two lines if your files live elsewhere
-# ============================================================================
-CONFIG_XML = "config.xml"        # path to your connection config (see below)
-OUTPUT_DIR = "audit-export"      # folder for the CSV output (created if absent)
+TOOL_NAME = "Dataverse Audit History Export"
+VERSION = "0.5.0"
+AUTHOR = "John Stover, Org Data Solutions"
+
+# Both paths are next to this script, wherever it is started from.
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+CONFIG_XML = os.path.join(SCRIPT_DIR, "config.xml")       # connection settings
+OUTPUT_DIR = os.path.join(SCRIPT_DIR, "audit-export")     # CSV and HTML output
 
 # config.xml format (see config.sample.xml):
 #   <config>
@@ -111,24 +98,81 @@ OUTPUT_DIR = "audit-export"      # folder for the CSV output (created if absent)
 #     <ClientId>00000000-0000-0000-0000-000000000000</ClientId>
 #     <ClientSecret>your-app-registration-secret</ClientSecret>
 #   </config>
-# ============================================================================
 
 FV = "OData.Community.Display.V1.FormattedValue"   # display-label annotation
 PAGE = 5000                                        # OData page size
 # A plain link: it carries only the tool name, never any audit data.
 SIGNUP_URL = "https://data.orgdatasolutions.com/signup?src=toolkit-audit-export"
 
+NO_CONSOLE_MESSAGE = (
+    "\nNo config.xml found and no console to ask on.\n"
+    "Copy config.sample.xml to config.xml next to this script and fill it in,\n"
+    "or run the tool from a command prompt and it will ask for the settings.\n"
+)
+
+
+# ----------------------------------------------------------------------------
+# First-run settings prompt
+# ----------------------------------------------------------------------------
+def ask(prompt: str, default: str = "") -> str:
+    shown = f"  {prompt}" + (f" [{default}]" if default else "") + ": "
+    try:
+        answer = input(shown).strip()
+    except EOFError:
+        sys.exit(NO_CONSOLE_MESSAGE)
+    return answer or default
+
+
+def ask_secret(prompt: str) -> str:
+    try:
+        return getpass.getpass(f"  {prompt}: ").strip()
+    except EOFError:
+        sys.exit(NO_CONSOLE_MESSAGE)
+
+
+def create_config_interactively(path: str):
+    """Ask for the four sign-in values on the console and write config.xml."""
+    if not sys.stdin or not sys.stdin.isatty():
+        sys.exit(NO_CONSOLE_MESSAGE)
+    print("\nNo config.xml found. Answer these questions and the file will be written to:")
+    print(f"  {path}")
+    print("The values come from the app registration; see docs/DATAVERSE-APP-REGISTRATION.md.\n")
+    org = ask("Environment URL (for example https://yourorg.crm.dynamics.com)")
+    tenant = ask("Directory (tenant) ID")
+    client = ask("Application (client) ID")
+    secret = ask_secret("Client secret value (not shown while typing)")
+    if not (org and tenant and client and secret):
+        sys.exit("All four values are required.")
+    if not org.lower().startswith("http"):
+        org = "https://" + org
+    xml = (
+        '<?xml version="1.0" encoding="utf-8"?>\n'
+        "<!-- Dataverse Audit History Export connection settings.\n"
+        "     Written by the tool on first run. Edit with any text editor.\n"
+        "     KEEP THIS FILE PRIVATE: it contains a client secret. -->\n"
+        "<config>\n"
+        f"  <OrgUrl>{xml_escape(org.rstrip('/'))}</OrgUrl>\n"
+        f"  <TenantId>{xml_escape(tenant)}</TenantId>\n"
+        f"  <ClientId>{xml_escape(client)}</ClientId>\n"
+        f"  <ClientSecret>{xml_escape(secret)}</ClientSecret>\n"
+        "</config>\n"
+    )
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(xml)
+    print(f"\nWritten: {path}\n")
+
 
 # ----------------------------------------------------------------------------
 # Dataverse Web API plumbing (client-credentials OAuth, paging, 429 retry)
 # ----------------------------------------------------------------------------
 def load_config(path: str):
+    if not os.path.exists(path):
+        create_config_interactively(path)
     try:
         cfg = open(path, encoding="utf-8").read()
     except OSError as e:
         sys.exit(f"Could not read config file '{path}': {e}\n"
-                 "Copy config.sample.xml to config.xml and fill it in "
-                 "(see the setup notes at the top of this script).")
+                 "Copy config.sample.xml to config.xml next to this script and fill it in.")
     def x(tag):
         m = re.search(f"<{tag}>(.*?)</{tag}>", cfg, re.S)
         if not m or not m.group(1).strip():
@@ -205,9 +249,9 @@ def open_csv(path, header):
 
 
 # ----------------------------------------------------------------------------
-# Branded HTML report (audit_report.html) - regenerated after every run.
-# Explore and export each save their summary into _report_data.json, so
-# running both accumulates into one page.
+# HTML report (audit_report.html), rewritten after every run. Explore and
+# export each save their summary into _report_data.json, so running both
+# fills one page.
 # ----------------------------------------------------------------------------
 def esc(v):
     return (str("" if v is None else v).replace("&", "&amp;")
@@ -311,13 +355,13 @@ def render_report(data):
     parts = [
         "<!doctype html><html><head><meta charset='utf-8'>",
         "<meta name='viewport' content='width=device-width,initial-scale=1'>",
-        "<title>Dataverse Audit Report - Org Data Solutions</title>",
+        f"<title>{esc(TOOL_NAME)} - {esc(data.get('org', ''))}</title>",
         f"<style>{REPORT_CSS}</style></head><body>",
         "<header><div class='wordmark'>ORG DATA SOLUTIONS</div>",
-        "<div class='hd-title'>Dataverse Audit Report</div></header>",
+        f"<div class='hd-title'>{esc(TOOL_NAME)}</div></header>",
         f"<div class='meta'>Environment: <strong>{esc(data.get('org', ''))}</strong>"
         f" &middot; Generated {esc(data.get('generated', ''))}"
-        " &middot; produced by the free ODS Dataverse Audit Export tool</div>",
+        f" &middot; {esc(TOOL_NAME)} {VERSION} beta</div>",
         "<main>",
         f"<div class='tiles'>{''.join(tiles)}</div>",
     ]
@@ -384,9 +428,11 @@ def render_report(data):
         "<a class='btn' href='mailto:support@orgdatasolutions.com?subject=Audit%20Analyzer'>"
         "Talk to us - support@orgdatasolutions.com</a></div>",
         "</main>",
-        "<footer>Free tool from <a href='https://orgdatasolutions.com'>Org Data Solutions</a> "
-        "&middot; John Stover &middot; <a href='mailto:support@orgdatasolutions.com'>support@orgdatasolutions.com</a> "
-        "&middot; provided as-is, no warranty. Generated locally - nothing leaves your machine.</footer>",
+        f"<footer>{esc(TOOL_NAME)} {VERSION} beta &middot; by John Stover, "
+        "<a href='https://orgdatasolutions.com'>Org Data Solutions</a> "
+        "&middot; <a href='mailto:support@orgdatasolutions.com'>support@orgdatasolutions.com</a> "
+        "&middot; free and open source (MIT License), provided as-is, no warranty. "
+        "Generated locally: nothing leaves your machine.</footer>",
         "</body></html>"))
     return "".join(parts)
 
@@ -506,7 +552,7 @@ def mode_explore(org, token, include_columns: bool):
     if not audit_on:
         print("Turn auditing on in Power Platform admin center (Environment ->")
         print("Settings -> Audit settings); only changes made AFTER that are kept.")
-    print("Next step: python ods_audit_export.py export")
+    print("Next step: export the history with   run export   (or   python dataverse_audit_history_export.py export)")
     print()
     print("Want this continuously warehoused with reports, alerts and a weekly")
     print("digest instead of snapshots? support@orgdatasolutions.com")
@@ -660,7 +706,7 @@ def mode_export(org, token, since: str, tables, want_details: bool, detail_cap: 
     print("=" * 68)
     if not writers:
         print("No audit events found in that window.")
-        print("Run 'python ods_audit_export.py explore' to confirm auditing is on.")
+        print("Run the explore mode to confirm auditing is on.")
     for entity in sorted(counts):
         print(f"  audit_{safe_name(entity)}.csv  ({counts[entity]} rows)")
     print(f"{events} events -> {len(writers)} file(s) in .\\{OUTPUT_DIR}\\")
@@ -680,27 +726,64 @@ def mode_export(org, token, since: str, tables, want_details: bool, detail_cap: 
 
 
 # ----------------------------------------------------------------------------
+USAGE = """Usage: python dataverse_audit_history_export.py explore [--columns]
+       python dataverse_audit_history_export.py export  [--days=30 | --since=YYYY-MM-DD]
+                                                        [--tables=contact,account]
+                                                        [--details] [--detail-cap=500]
+       python dataverse_audit_history_export.py --version
+
+Either mode also takes --config=<file> (default: config.xml next to this script)
+and --out=<folder> (default: the audit-export folder next to this script).
+On Windows, run.cmd in this folder takes the same arguments:  run explore"""
+
+
+def choose_mode_interactively() -> str:
+    """No mode on the command line: ask, when there is a console to ask on."""
+    if not sys.stdin or not sys.stdin.isatty():
+        return ""
+    print("What do you want to do?")
+    print("  1. Check whether auditing is on, and for which tables   (explore)")
+    print("  2. Export the audit history of the last 30 days to CSV  (export)")
+    print("  3. Both, one after the other")
+    choice = ask("Type 1, 2 or 3", "1")
+    return {"1": "explore", "2": "export", "3": "both"}.get(choice, "")
+
+
 def main() -> int:
     args = sys.argv[1:]
+    if "--version" in args:
+        print(f"{TOOL_NAME} {VERSION} (beta)")
+        return 0
+    if "--help" in args or "-h" in args:
+        print(__doc__)
+        print(USAGE)
+        return 0
     mode = args[0].lower() if args and not args[0].startswith("-") else ""
     def opt(name, default=None):
         return next((a.split("=", 1)[1] for a in args if a.startswith(f"--{name}=")), default)
 
+    global CONFIG_XML, OUTPUT_DIR
+    if opt("config"):
+        CONFIG_XML = os.path.abspath(opt("config"))
+    if opt("out"):
+        OUTPUT_DIR = os.path.abspath(opt("out"))
+
+    print(f"{TOOL_NAME} {VERSION} (beta)\n")
     if mode not in ("explore", "export"):
-        print(__doc__.split("Setup (one-time")[0])
-        print("Usage: python ods_audit_export.py explore [--columns]")
-        print("       python ods_audit_export.py export  [--days=30 | --since=YYYY-MM-DD]")
-        print("                                          [--tables=contact,account]")
-        print("                                          [--details] [--detail-cap=500]")
-        return 1
+        mode = choose_mode_interactively()
+        if mode not in ("explore", "export", "both"):
+            print(USAGE)
+            return 1
 
     org, tenant, client_id, secret = load_config(CONFIG_XML)
     print(f"Connecting to {org} ...", flush=True)
     token = get_token(org, tenant, client_id, secret)
 
-    if mode == "explore":
+    if mode in ("explore", "both"):
         mode_explore(org, token, include_columns="--columns" in args)
-        return 0
+        if mode == "explore":
+            return 0
+        print()
 
     since = opt("since")
     if since:

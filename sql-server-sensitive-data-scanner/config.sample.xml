@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SQL Server Sensitive Data Scanner - connection settings.
+     By John Stover, Org Data Solutions.
+
+     You do not have to create this file by hand: run the scanner once and
+     it asks for these values and writes config.xml for you. To fill it in
+     yourself, copy this file to config.xml next to the script and edit it.
+     KEEP config.xml PRIVATE: it may contain a password.
+
+     Server:       SQL Server host, for example sqlprod, sql\INSTANCE, or
+                   yourserver.database.windows.net
+     Database:     the database to scan
+     Username /    a SQL login. A READ-ONLY login (db_datareader) is enough.
+     Password:     Leave both empty and set TrustedConnection to yes to use
+                   your Windows account instead.
+     Driver:       ODBC driver name as installed. If the one named here is not
+                   installed, the scanner uses whichever SQL Server driver is.
+     Encrypt / TrustServerCertificate:
+                   yes/yes works for most servers. Set TrustServerCertificate
+                   to no when your server has a certificate your machine
+                   trusts.
+
+     Questions: support@orgdatasolutions.com -->
+<config>
+  <Server>your-sql-server</Server>
+  <Database>YourDatabase</Database>
+  <Username>readonly_user</Username>
+  <Password>paste-password-here</Password>
+  <TrustedConnection>no</TrustedConnection>
+  <Driver>ODBC Driver 18 for SQL Server</Driver>
+  <Encrypt>yes</Encrypt>
+  <TrustServerCertificate>yes</TrustServerCertificate>
+</config>
