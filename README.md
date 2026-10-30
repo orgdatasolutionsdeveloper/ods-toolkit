@@ -1,10 +1,10 @@
-# Free Tools for SQL Server and Microsoft Dataverse
+# Free Tools for SQL Server, Microsoft Dataverse and Public Data
 
 **By John Stover, Org Data Solutions.** Four free, open-source command-line
 tools for nonprofits, associations and any organization that runs on
-Microsoft SQL Server or Microsoft Dataverse (Dynamics 365, Power Platform).
-Run them on your own computer, against your own systems, and keep the
-results.
+Microsoft SQL Server or Microsoft Dataverse (Dynamics 365, Power Platform),
+plus an Excel workbook for publishing a public data product. Run them on
+your own computer, against your own systems, and keep the results.
 
 > **Beta.** Every tool here is beta software with a version below 1.0. They
 > are in real use, but expect rough edges. Try each one against a
@@ -29,10 +29,15 @@ results.
 | [**Dataverse Audit History Export**](dataverse-audit-history-export/README.md) | 0.5.0 beta | Checks whether Dataverse auditing is on for each table and column, and exports the audit history to one CSV file per table, with an HTML summary. | No. Read-only. |
 | [**Dataverse to SQL Server Sync**](dataverse-to-sql-server-sync/README.md) | 0.6.0 beta | Copies Dataverse tables into your own SQL Server database and keeps them current with incremental runs; builds a data dictionary and friendly-name views. | Writes to the SQL database you choose. Read-only against Dataverse. |
 | [**SQL Server Backup All Databases**](sql-server-backup-all-databases/README.md) | 0.5.0 beta | Backs up every online database on one or more SQL Server instances into folders you choose, with logs and optional retention. | Writes `.bak` files; retention deletes old ones. |
+| [**Public Data Product Kit**](public-data-product-kit/README.md) | 0.9.0 beta | An Excel workbook that walks you through publishing one trusted dataset as a public data product your industry can cite: nine sections, a readiness status for each, and a publish gate. Nothing to install. | No. A spreadsheet you fill in. |
 
 ## Running a tool
 
-Every tool folder has a **`run.cmd`**. Double-click it, or open a command
+The Public Data Product Kit is a workbook, not a program: open
+`public-data-product-kit/Public-Data-Product-Kit.xlsx` in Excel or
+LibreOffice Calc and start on the **Start** tab.
+
+Every other tool folder has a **`run.cmd`**. Double-click it, or open a command
 prompt in the folder and type `run`. The first time it runs it does three
 things:
 
@@ -70,6 +75,7 @@ under PowerShell 7 (`pwsh`). The backup tool is written for Windows.
 | Dataverse Audit History Export | Python 3.9 or later | Nothing: standard library only | An Entra ID app registration that is an application user in the environment, see [docs/DATAVERSE-APP-REGISTRATION.md](docs/DATAVERSE-APP-REGISTRATION.md) |
 | Dataverse to SQL Server Sync | PowerShell 7.2 or later | Nothing | The same app registration, plus a SQL login that can create tables and views in the target database |
 | SQL Server Backup All Databases | Windows PowerShell 5.1 or PowerShell 7 | The `SqlServer` module (installed for you) | A login with `BACKUP DATABASE` permission, or your Windows account |
+| Public Data Product Kit | Excel 2016 or later, or LibreOffice Calc | Nothing: no macros, no add-ins | None |
 
 ## Checking the download
 
@@ -116,6 +122,7 @@ ods-toolkit/
   dataverse-audit-history-export/      Python: Dataverse audit settings check and history export
   dataverse-to-sql-server-sync/        PowerShell: Dataverse tables copied into SQL Server
   sql-server-backup-all-databases/     PowerShell: back up every database on an instance
+  public-data-product-kit/             Excel: the nine-section Public Data Product Kit workbook
 ```
 
 ## Free workspace
@@ -123,7 +130,9 @@ ods-toolkit/
 The governance tools of the hosted **ODS Data Management Platform** are free
 for approved nonprofits and .org organizations: data catalog and profiling,
 sensitivity tags with role-based masking, access audit, evidence pack and a
-weekly digest. Each tool's report links to the sign-up page.
+weekly digest. Each tool's report links to the sign-up page. The same
+workspace runs the Public Data Product Kit online, with a public page for
+each finished product.
 
 ## License, customized versions and support
 
