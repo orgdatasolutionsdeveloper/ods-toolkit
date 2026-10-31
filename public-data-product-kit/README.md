@@ -72,6 +72,17 @@ product.
   tier, yes/no, fold/suppress, confidence, product status). Everything else
   is free text.
 
+## The session deck
+
+`Beyond_the_Dashboard_APPCon2026.pptx` is the APPCon 2026 session *Beyond
+the Dashboard: The Association as an Intelligence Platform*, presented by
+Brian Kaltenbaugh (ARDA) and John Stover (Org Data Solutions). It is the
+talk that introduced the kit: how one association connected its membership
+system, its proprietary industry data and public sources behind shared
+definitions, and how the nine sections turn that into public data products
+and governed AI services. Thirty slides with speaker notes. The screens and
+figures in it are illustrative or synthetic unless a slide says otherwise.
+
 ## The online version
 
 The hosted ODS Data Management Platform runs the same kit with measures

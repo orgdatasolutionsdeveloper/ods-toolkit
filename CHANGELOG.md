@@ -18,6 +18,8 @@ Changes since the first upload on 2026-10-19:
 - New: `public-data-product-kit/`, an Excel workbook for publishing one
   trusted dataset as a public data product. Nine sections with a readiness
   status each, a publish gate, and one worked example.
+- New: the APPCon 2026 session deck *Beyond the Dashboard: The Association
+  as an Intelligence Platform*, in the same folder.
 
 - Every tool was renamed so the folder and file names say what the tool does.
 - Each tool folder has a `run.cmd`. Double-click it or run it from a command

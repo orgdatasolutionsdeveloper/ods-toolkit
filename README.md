@@ -29,7 +29,7 @@ your own computer, against your own systems, and keep the results.
 | [**Dataverse Audit History Export**](dataverse-audit-history-export/README.md) | 0.5.0 beta | Checks whether Dataverse auditing is on for each table and column, and exports the audit history to one CSV file per table, with an HTML summary. | No. Read-only. |
 | [**Dataverse to SQL Server Sync**](dataverse-to-sql-server-sync/README.md) | 0.6.0 beta | Copies Dataverse tables into your own SQL Server database and keeps them current with incremental runs; builds a data dictionary and friendly-name views. | Writes to the SQL database you choose. Read-only against Dataverse. |
 | [**SQL Server Backup All Databases**](sql-server-backup-all-databases/README.md) | 0.5.0 beta | Backs up every online database on one or more SQL Server instances into folders you choose, with logs and optional retention. | Writes `.bak` files; retention deletes old ones. |
-| [**Public Data Product Kit**](public-data-product-kit/README.md) | 0.9.0 beta | An Excel workbook that walks you through publishing one trusted dataset as a public data product your industry can cite: nine sections, a readiness status for each, and a publish gate. Nothing to install. | No. A spreadsheet you fill in. |
+| [**Public Data Product Kit**](public-data-product-kit/README.md) | 0.9.0 beta | An Excel workbook that walks you through publishing one trusted dataset as a public data product your industry can cite: nine sections, a readiness status for each, and a publish gate. Nothing to install. The folder also holds the APPCon 2026 session deck that introduced the kit. | No. A spreadsheet you fill in. |
 
 ## Running a tool
 
@@ -122,7 +122,8 @@ ods-toolkit/
   dataverse-audit-history-export/      Python: Dataverse audit settings check and history export
   dataverse-to-sql-server-sync/        PowerShell: Dataverse tables copied into SQL Server
   sql-server-backup-all-databases/     PowerShell: back up every database on an instance
-  public-data-product-kit/             Excel: the nine-section Public Data Product Kit workbook
+  public-data-product-kit/             Excel: the nine-section Public Data Product Kit workbook,
+                                       plus the APPCon 2026 session deck (PowerPoint)
 ```
 
 ## Free workspace
